@@ -222,25 +222,27 @@ class _MenuScreenState extends State<MenuScreen> {
   String _category = kCategories.first;
   final Map<String, int> _qty = {};
 
-  List<MenuItem> get _visible => widget.items.where((item) {
-    final matchesQuery =
-        _query.isEmpty || item.name.toLowerCase().contains(_query.toLowerCase());
-    final matchesCategory = switch (_category) {
-      'Semua' => true,
-      'Promo' => item.promo,
-      _ => item.category == _category,
-    };
-    return matchesQuery && matchesCategory;
-  }).toList();
+  List<MenuItem> get _visibleItems {
+    final search = _query.trim().toLowerCase();
+    return widget.items.where((item) {
+      final matchesSearch = search.isEmpty || item.name.toLowerCase().contains(search);
+      final matchesCat = switch (_category) {
+        'Semua' => true,
+        'Promo' => item.promo,
+        _ => item.category == _category,
+      };
+      return matchesSearch && matchesCat;
+    }).toList();
+  }
 
   int get _count => _qty.values.fold(0, (sum, n) => sum + n);
 
   int get _total {
-    var total = 0;
+    var sum = 0;
     for (final item in widget.items) {
-      total += (_qty[item.id] ?? 0) * item.price;
+      sum += (_qty[item.id] ?? 0) * item.price;
     }
-    return total;
+    return sum;
   }
 
   void _add(MenuItem item) {
@@ -254,63 +256,99 @@ class _MenuScreenState extends State<MenuScreen> {
     setState(() => _qty.clear());
   }
 
+  void _resetFilter() {
+    setState(() {
+      _query = '';
+      _category = kCategories.first;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final visible = _visible;
-    final promos = widget.items.where((item) => item.promo).toList();
-    final isTablet = MediaQuery.sizeOf(context).width > 600;
+    final visible = _visibleItems;
+    final promoList = widget.items.where((e) => e.promo).toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Menu')),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const StoreHeader(),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Gap.md),
-            child: SearchBar(
-              key: const Key('search-field'),
-              hintText: 'Cari menu…',
-              leading: const Icon(Icons.search),
-              onChanged: (value) => setState(() => _query = value),
-            ),
-          ),
-          const SizedBox(height: Gap.sm),
-          CategoryBar(
-            selected: _category,
-            onSelected: (category) => setState(() => _category = category),
-          ),
-          PromoStrip(first: promos[0], second: promos[1]),
-          Expanded(
-            child: isTablet
-                ? GridView.count(
-              crossAxisCount: 4,
-              padding: const EdgeInsets.all(Gap.md),
-              mainAxisSpacing: Gap.md,
-              crossAxisSpacing: Gap.md,
-              children: [
-                for (final item in visible)
-                  MenuCard(
-                    item: item,
-                    quantity: _qty[item.id] ?? 0,
-                    onAdd: () => _add(item),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isTabletLayout = constraints.maxWidth >= 600;
+
+          return CustomScrollView(
+            slivers: [
+              const SliverToBoxAdapter(child: StoreHeader()),
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: Gap.md),
+                  child: SearchBar(
+                    key: const Key('search-field'),
+                    hintText: 'Cari menu…',
+                    leading: const Icon(Icons.search),
+                    onChanged: (val) => setState(() => _query = val),
                   ),
-              ],
-            )
-                : ListView(
-              children: [
-                for (final item in visible)
-                  MenuTile(
-                    item: item,
-                    quantity: _qty[item.id] ?? 0,
-                    onAdd: () => _add(item),
-                  ),
-              ],
-            ),
-          ),
-        ],
+                ),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: Gap.sm)),
+              SliverToBoxAdapter(
+                child: CategoryBar(
+                  selected: _category,
+                  onSelected: (cat) => setState(() => _category = cat),
+                ),
+              ),
+              if (promoList.length >= 2)
+                SliverToBoxAdapter(
+                  child: PromoStrip(first: promoList[0], second: promoList[1]),
+                ),
+              _buildMenuContentSliver(visible, isTabletLayout),
+            ],
+          );
+        },
       ),
       bottomNavigationBar: CartBar(count: _count, total: _total, onOrder: _order),
+    );
+  }
+
+  Widget _buildMenuContentSliver(List<MenuItem> items, bool isTablet) {
+    if (items.isEmpty) {
+      return SliverFillRemaining(
+        hasScrollBody: false,
+        child: EmptyState(onReset: _resetFilter),
+      );
+    }
+
+    if (isTablet) {
+      return SliverPadding(
+        padding: const EdgeInsets.all(Gap.md),
+        sliver: SliverGrid.builder(
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 4,
+            mainAxisSpacing: Gap.md,
+            crossAxisSpacing: Gap.md,
+            childAspectRatio: 0.72,
+          ),
+          itemCount: items.length,
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return MenuCard(
+              item: item,
+              quantity: _qty[item.id] ?? 0,
+              onAdd: () => _add(item),
+            );
+          },
+        ),
+      );
+    }
+
+    return SliverList.builder(
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final item = items[index];
+        return MenuTile(
+          item: item,
+          quantity: _qty[item.id] ?? 0,
+          onAdd: () => _add(item),
+        );
+      },
     );
   }
 }
@@ -321,7 +359,7 @@ class StoreHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return Padding(
       padding: const EdgeInsets.all(Gap.md),
@@ -334,23 +372,41 @@ class StoreHeader extends StatelessWidget {
               color: cs.primaryContainer,
               borderRadius: BorderRadius.circular(12),
             ),
+            alignment: Alignment.center,
             child: Icon(Icons.storefront, color: cs.onPrimaryContainer),
           ),
           const SizedBox(width: Gap.md),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(kStoreName, style: text.titleMedium),
-              Text(
-                kStoreHours,
-                style: text.bodySmall?.copyWith(color: cs.onSurfaceVariant),
-              ),
-            ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  kStoreName,
+                  style: textTheme.titleMedium,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  kStoreHours,
+                  style: textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
           ),
-          const SizedBox(width: Gap.md),
+          const SizedBox(width: Gap.sm),
           Icon(Icons.star_rounded, size: 20, color: cs.tertiary),
           const SizedBox(width: Gap.xs),
-          Text('4.8 · 1,2 rb ulasan', style: text.labelMedium),
+          Flexible(
+            child: Text(
+              '4.8 · 1,2 rb ulasan',
+              style: textTheme.labelMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -358,24 +414,30 @@ class StoreHeader extends StatelessWidget {
 }
 
 class CategoryBar extends StatelessWidget {
-  const CategoryBar({super.key, required this.selected, required this.onSelected});
+  const CategoryBar({
+    super.key,
+    required this.selected,
+    required this.onSelected,
+  });
 
   final String selected;
   final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: Gap.md),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          for (final category in kCategories) ...[
+          for (var i = 0; i < kCategories.length; i++) ...[
             ChoiceChip(
-              label: Text(category),
-              selected: category == selected,
-              onSelected: (_) => onSelected(category),
+              label: Text(kCategories[i]),
+              selected: kCategories[i] == selected,
+              onSelected: (_) => onSelected(kCategories[i]),
             ),
-            const SizedBox(width: Gap.sm),
+            if (i < kCategories.length - 1) const SizedBox(width: Gap.sm),
           ],
         ],
       ),
@@ -391,8 +453,9 @@ class PromoStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(Gap.md),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: Gap.md, vertical: Gap.sm),
       child: Row(
         children: [
           PromoCard(item: first),
@@ -412,7 +475,7 @@ class PromoCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return SizedBox(
       width: 200,
@@ -427,26 +490,91 @@ class PromoCard extends StatelessWidget {
             children: [
               Text(
                 'PROMO HARI INI',
-                style: text.labelSmall?.copyWith(
+                style: textTheme.labelSmall?.copyWith(
                   color: cs.onTertiaryContainer,
                   letterSpacing: 1.2,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: Gap.xs),
+              Expanded(
+                child: Text(
+                  item.name,
+                  style: textTheme.titleMedium?.copyWith(color: cs.onTertiaryContainer),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(height: Gap.xs),
               Text(
-                item.name,
-                style: text.titleMedium?.copyWith(color: cs.onTertiaryContainer),
-              ),
-              const Spacer(),
-              Text(
                 rupiah(item.price),
-                style: text.titleSmall?.copyWith(
+                style: textTheme.titleSmall?.copyWith(
                   color: cs.onTertiaryContainer,
                   fontWeight: FontWeight.bold,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class EmptyState extends StatelessWidget {
+  const EmptyState({super.key, this.onReset});
+
+  final VoidCallback? onReset;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Center(
+      key: const Key('empty-state'),
+      child: Padding(
+        padding: const EdgeInsets.all(Gap.lg),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(Gap.md),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.search_off_rounded,
+                size: 48,
+                color: cs.primary,
+              ),
+            ),
+            const SizedBox(height: Gap.md),
+            Text(
+              'Menu tidak ditemukan',
+              style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: Gap.xs),
+            Text(
+              'Coba kata kunci lain atau ubah filter kategori.',
+              style: textTheme.bodyMedium?.copyWith(color: cs.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+            if (onReset != null) ...[
+              const SizedBox(height: Gap.md),
+              FilledButton.tonalIcon(
+                onPressed: onReset,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Reset Filter'),
+              ),
+            ],
+          ],
         ),
       ),
     );
@@ -468,7 +596,7 @@ class MenuTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return InkWell(
       onTap: onAdd,
@@ -482,16 +610,39 @@ class MenuTile extends StatelessWidget {
               child: Icon(iconFor(item.category), color: cs.onSecondaryContainer),
             ),
             const SizedBox(width: Gap.md),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(item.name, style: text.titleMedium),
-                if (item.promo)
-                  Text('Promo', style: text.labelSmall?.copyWith(color: cs.primary)),
-              ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.name,
+                    style: textTheme.titleMedium,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (item.promo)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        'Promo',
+                        style: textTheme.labelSmall?.copyWith(color: cs.primary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
             ),
-            const Spacer(),
-            Text(rupiah(item.price), style: text.labelLarge),
+            const SizedBox(width: Gap.sm),
+            Flexible(
+              child: Text(
+                rupiah(item.price),
+                style: textTheme.labelLarge,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: Gap.xs),
             IconButton(
               tooltip: 'Tambah',
               onPressed: onAdd,
@@ -523,37 +674,53 @@ class MenuCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return Card(
+      clipBehavior: Clip.antiAlias,
       child: Padding(
         padding: const EdgeInsets.all(Gap.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              height: 110,
-              decoration: BoxDecoration(
-                color: cs.secondaryContainer,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              alignment: Alignment.center,
-              child: Icon(
-                iconFor(item.category),
-                size: 40,
-                color: cs.onSecondaryContainer,
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: cs.secondaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  iconFor(item.category),
+                  size: 40,
+                  color: cs.onSecondaryContainer,
+                ),
               ),
             ),
             const SizedBox(height: Gap.sm),
-            Text(item.name, style: text.titleSmall),
+            Text(
+              item.name,
+              style: textTheme.titleSmall,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
             const SizedBox(height: Gap.xs),
-            Text(rupiah(item.price), style: text.bodyMedium),
+            Text(
+              rupiah(item.price),
+              style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             const SizedBox(height: Gap.sm),
             SizedBox(
               width: double.infinity,
               child: FilledButton.tonal(
                 onPressed: onAdd,
-                child: Text(quantity > 0 ? 'Tambah ($quantity)' : 'Tambah'),
+                child: Text(
+                  quantity > 0 ? 'Tambah ($quantity)' : 'Tambah',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
           ],
@@ -578,30 +745,38 @@ class CartBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final text = Theme.of(context).textTheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return Container(
-      height: 72,
-      padding: const EdgeInsets.symmetric(horizontal: Gap.md),
       color: cs.surfaceContainerHigh,
-      child: Row(
-        children: [
-          Icon(Icons.shopping_bag_outlined, color: cs.onSurfaceVariant),
-          const SizedBox(width: Gap.sm),
-          Text(
-            'Pesanan: $count item · Total ${rupiah(total)}',
-            style: text.titleSmall,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: Gap.md, vertical: Gap.sm),
+          child: Row(
+            children: [
+              Icon(Icons.shopping_bag_outlined, color: cs.onSurfaceVariant),
+              const SizedBox(width: Gap.sm),
+              Expanded(
+                child: Text(
+                  'Pesanan: $count item · Total ${rupiah(total)}',
+                  style: textTheme.titleSmall,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: Gap.md),
+              SizedBox(
+                width: 140,
+                child: FilledButton(
+                  key: const Key('order-button'),
+                  onPressed: count == 0 ? null : onOrder,
+                  child: const Text('Pesan'),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: Gap.md),
-          SizedBox(
-            width: 160,
-            child: FilledButton(
-              key: const Key('order-button'),
-              onPressed: count == 0 ? null : onOrder,
-              child: const Text('Pesan'),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
